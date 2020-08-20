@@ -10,7 +10,6 @@ from data import PatchSet, Mode
 from utils import *
 
 import shutil
-import sys
 from timeit import default_timer as timer
 from datetime import datetime
 import numpy as np
@@ -29,7 +28,6 @@ class Experiment(object):
         self.history = self.train_dir / 'history.csv'
         self.test_dir = self.save_dir / 'test'
         self.test_dir.mkdir(exist_ok=True)
-        self.checkpoint = self.train_dir / 'last.pth'
         self.best = self.train_dir / 'best.pth'
         self.last_g = self.train_dir / 'generator.pth'
         self.last_d = self.train_dir / 'discriminator.pth'
@@ -118,7 +116,7 @@ class Experiment(object):
     def train(self, train_dir, val_dir, patch_stride, batch_size,
               num_workers=0, epochs=50, resume=True):
         last_epoch = -1
-        least_error = sys.maxsize
+        least_error = float('inf')
         if resume and self.history.exists():
             df = pd.read_csv(self.history)
             last_epoch = int(df.iloc[-1]['epoch'])
