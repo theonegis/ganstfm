@@ -51,6 +51,10 @@ class Experiment(object):
         self.g_optimizer = optim.Adam(self.generator.parameters(), lr=option.lr)
         self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=option.lr)
 
+        n_params = sum(p.numel() for p in self.generator.parameters() if p.requires_grad)
+        self.logger.info(f'There are {n_params} trainable parameters for generator.')
+        n_params = sum(p.numel() for p in self.discriminator.parameters() if p.requires_grad)
+        self.logger.info(f'There are {n_params} trainable parameters for discriminator.')
         self.logger.info(str(self.generator))
         self.logger.info(str(self.discriminator))
 

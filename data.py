@@ -19,25 +19,27 @@ class Mode(Enum):
 
 def get_pair_path(directory: Path, mode: Mode):
     paths: list = [None] * 3
-    if mode is Mode.PREDICTION:
+    if mode is Mode.TRAINING:
+        year, coarse, fine = directory.name.split('_')
+        for f in directory.glob('*.tif'):
+            paths[0 if year + coarse in f.name else 2] = f
+        refs = [p for p in (directory.parents[1] / 'refs').glob('*.tif')]
+        paths[1] = refs[np.random.randint(0, len(refs))]
+    else:
         ref_label, pred_label = directory.name.split('-')
         ref_tokens, pred_tokens = ref_label.split('_'), pred_label.split('_')
         for f in directory.glob('*.tif'):
-            if pred_tokens[0] + pred_tokens[1] in f.name:
-                paths[0] = f
-            elif ref_tokens[0] + ref_tokens[2] in f.name:
-                paths[1] = f
-        del paths[2]
-    else:
-        year, coarse, fine = directory.name.split('_')
-        for f in directory.glob('*.tif'):
-            if year + coarse in f.name:
-                paths[0] = f
-            else:
-                paths[2] = f
-
-        refs = [p for p in (directory.parents[1] / 'refs').glob('*.tif')]
-        paths[1] = refs[np.random.randint(0, len(refs))]
+            order = {
+                pred_tokens[0] + pred_tokens[1] in f.name: 0,
+                ref_tokens[0] + ref_tokens[2] in f.name: 1,
+                pred_tokens[0] + ref_tokens[2] in f.name: 2
+            }
+            try:
+                paths[order[True]] = f
+            except KeyError:
+                continue
+        if mode is Mode.PREDICTION:
+            del paths[2]
     return paths
 
 
