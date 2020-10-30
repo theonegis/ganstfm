@@ -32,12 +32,10 @@ def get_pair_path(directory: Path, mode: Mode):
             order = {
                 pred_tokens[0] + pred_tokens[1] in f.name: 0,
                 ref_tokens[0] + ref_tokens[2] in f.name: 1,
-                pred_tokens[0] + ref_tokens[2] in f.name: 2
+                pred_tokens[0] + pred_tokens[2] in f.name: 2
             }
-            try:
+            if True in order.keys():
                 paths[order[True]] = f
-            except KeyError:
-                continue
         if mode is Mode.PREDICTION:
             del paths[2]
     return paths
