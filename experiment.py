@@ -36,7 +36,7 @@ class Experiment(object):
         self.logger.info('Model initialization')
 
         self.generator = SFFusion().to(self.device)
-        self.discriminator = Discriminator().to(self.device)
+        self.discriminator = MSDiscriminator().to(self.device)
         self.pretrained = AutoEncoder().to(self.device)
         load_pretrained(self.pretrained, 'assets/autoencoder.pth')
 

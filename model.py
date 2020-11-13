@@ -12,7 +12,6 @@ class Sampling(enum.Enum):
     UpSampling = enum.auto()
     DownSampling = enum.auto()
     Identity = enum.auto()
-    MaxPooling = enum.auto()
 
 
 NUM_BANDS = 6
@@ -27,6 +26,29 @@ class Upsample(nn.Module):
 
     def forward(self, inputs):
         return F.interpolate(inputs, scale_factor=self.scale_factor)
+
+
+class ReconstructionLoss(nn.Module):
+    def __init__(self, model, alpha=0.6, beta=0.4):
+        super(ReconstructionLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.model = model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        self.encoder = nn.Sequential(
+            self.model.conv1,
+            self.model.conv2,
+            self.model.conv3,
+            self.model.conv4
+        )
+
+    def forward(self, prediction, target):
+        _prediction, _target = self.encoder(prediction), self.encoder(target)
+        loss = (F.l1_loss(prediction, target) +
+                self.alpha * F.mse_loss(_prediction, _target) +
+                self.beta * (1.0 - torch.mean(F.cosine_similarity(_prediction, _target))))
+        return loss
 
 
 class Conv3X3NoPadding(nn.Conv2d):
@@ -44,62 +66,47 @@ class Conv3X3WithPadding(nn.Sequential):
 
 class ConvBlock(nn.Sequential):
     def __init__(self, in_channels, out_channels, sampling=None):
-        layers = []
+        layers = [Conv3X3WithPadding(in_channels, out_channels)]
         if sampling == Sampling.UpSampling:
-            layers.append(Conv3X3WithPadding(in_channels, out_channels))
             layers.append(Upsample(2))
         elif sampling == Sampling.DownSampling:
-            layers.append(Conv3X3WithPadding(in_channels, out_channels, 2))
-        elif sampling == Sampling.MaxPooling:
-            layers.append(Conv3X3WithPadding(in_channels, out_channels))
-            layers.append(nn.MaxPool2d(2))
-        else:
-            layers.append(Conv3X3WithPadding(in_channels, out_channels))
+            layers[0] = Conv3X3WithPadding(in_channels, out_channels, 2)
 
         layers.append(nn.LeakyReLU(inplace=True))
         super(ConvBlock, self).__init__(*layers)
 
 
 class ResidulBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, sampling=None):
         super(ResidulBlock, self).__init__()
         channels = min(in_channels, out_channels)
-        self.residual = nn.Sequential(
+        residual = [
             SwitchNorm2d(in_channels),
-            nn.LeakyReLU(),
+            nn.LeakyReLU(inplace=True),
             Conv3X3WithPadding(in_channels, channels),
             SwitchNorm2d(channels),
-            nn.LeakyReLU(),
+            nn.LeakyReLU(inplace=True),
             nn.Conv2d(channels, out_channels, 1)
-        )
-        self.transform = Conv3X3WithPadding(in_channels, out_channels)
+        ]
+        transform = [
+            Conv3X3WithPadding(in_channels, channels),
+            nn.Conv2d(channels, out_channels, 1),
+            nn.LeakyReLU(inplace=True)
+        ]
+        if sampling == Sampling.UpSampling:
+            residual.insert(3, Upsample(2))
+            transform.insert(2, Upsample(2))
+        elif sampling == Sampling.DownSampling:
+            residual[2] = Conv3X3WithPadding(in_channels, channels, 2)
+            transform[0] = Conv3X3WithPadding(in_channels, channels, 2)
+
+        self.residual = nn.Sequential(*residual)
+        self.transform = nn.Sequential(*transform)
 
     def forward(self, inputs):
-        if isinstance(inputs, (list, tuple)):
-            return self.transform(inputs[0]) + self.residual(inputs[1])
-        return self.transform(inputs) + self.residual(inputs)
-
-
-class ReconstructionLoss(nn.Module):
-    def __init__(self, model, alpha=1.0, beta=1.0):
-        super(ReconstructionLoss, self).__init__()
-        self.alpha = alpha
-        self.beta = beta
-        self.model = model.eval()
-        for param in self.model.parameters():
-            param.requires_grad = False
-        self.encoder = nn.Sequential(
-            self.model.conv1,
-            self.model.conv2,
-            self.model.conv3,
-            self.model.conv4
-        )
-
-    def forward(self, prediction, target):
-        loss = (F.l1_loss(prediction, target) +
-                self.alpha * F.mse_loss(self.encoder(prediction), self.encoder(target)) +
-                self.beta * (1.0 - msssim(prediction, target, normalize=True)))
-        return loss
+        trunk = self.residual(inputs[1])
+        lateral = self.transform(inputs[0])
+        return lateral, trunk + lateral
 
 
 class AutoEncoder(nn.Module):
@@ -109,7 +116,7 @@ class AutoEncoder(nn.Module):
         self.conv1 = ConvBlock(in_channels, channels[0])
         self.conv2 = ConvBlock(channels[0], channels[1], Sampling.DownSampling)
         self.conv3 = ConvBlock(channels[1], channels[2], Sampling.DownSampling)
-        self.conv4 = ConvBlock(channels[2], channels[3], Sampling.DownSampling, )
+        self.conv4 = ConvBlock(channels[2], channels[3], Sampling.DownSampling)
         self.conv5 = ConvBlock(channels[3], channels[2], Sampling.UpSampling)
         self.conv6 = ConvBlock(channels[2] * 2, channels[1], Sampling.UpSampling)
         self.conv7 = ConvBlock(channels[1] * 2, channels[0], Sampling.UpSampling)
@@ -127,19 +134,29 @@ class AutoEncoder(nn.Module):
         return l8
 
 
-class SFFusion(nn.Sequential):
+class SFFusion(nn.Module):
     def __init__(self, in_channels=NUM_BANDS, out_channels=NUM_BANDS):
+        super(SFFusion, self).__init__()
         channels = (16, 32, 64, 128)
-        super(SFFusion, self).__init__(
-            ResidulBlock(in_channels, channels[0]),
-            ResidulBlock(channels[0], channels[1]),
-            ResidulBlock(channels[1], channels[2]),
-            ResidulBlock(channels[2], channels[3]),
-            ResidulBlock(channels[3], channels[2]),
-            ResidulBlock(channels[2], channels[1]),
-            ResidulBlock(channels[1], channels[0]),
-            nn.Conv2d(channels[0], out_channels, 1)
-        )
+        self.conv1 = ResidulBlock(in_channels, channels[0])
+        self.conv2 = ResidulBlock(channels[0], channels[1], Sampling.DownSampling)
+        self.conv3 = ResidulBlock(channels[1], channels[2], Sampling.DownSampling)
+        self.conv4 = ResidulBlock(channels[2], channels[3], Sampling.DownSampling)
+        self.conv5 = ResidulBlock(channels[3], channels[2], Sampling.UpSampling)
+        self.conv6 = ResidulBlock(channels[2] * 2, channels[1], Sampling.UpSampling)
+        self.conv7 = ResidulBlock(channels[1] * 2, channels[0], Sampling.UpSampling)
+        self.conv8 = nn.Conv2d(channels[0] * 2, out_channels, 1)
+
+    def forward(self, inputs):
+        c1, f1 = self.conv1(inputs)
+        c2, f2 = self.conv2((c1, f1))
+        c3, f3 = self.conv3((c2, f2))
+        c4, f4 = self.conv4((c3, f3))
+        c5, f5 = self.conv5((c4, f4))
+        c6, f6 = self.conv6((torch.cat((f3, f5), 1), torch.cat((c3, c5), 1)))
+        c7, f7 = self.conv7((torch.cat((f2, f6), 1), torch.cat((c2, c6), 1)))
+        l8 = self.conv8(torch.cat((f1, f7), 1))
+        return l8
 
 
 class ResidulBlockWithSN(nn.Module):
@@ -147,11 +164,11 @@ class ResidulBlockWithSN(nn.Module):
         super(ResidulBlockWithSN, self).__init__()
         self.residual = nn.Sequential(
             nn.BatchNorm2d(in_channels),
-            nn.LeakyReLU(),
+            nn.LeakyReLU(inplace=True),
             SpectralNorm2d(
                 Conv3X3NoPadding(in_channels, in_channels, stride=2)),
             nn.BatchNorm2d(in_channels),
-            nn.LeakyReLU(),
+            nn.LeakyReLU(inplace=True),
             SpectralNorm2d(
                 nn.Conv2d(in_channels, out_channels, 1)),
         )
@@ -174,3 +191,17 @@ class Discriminator(nn.Sequential):
     def forward(self, inputs):
         prediction = super(Discriminator, self).forward(inputs)
         return prediction.view(-1, 1).squeeze(1)
+
+
+class MSDiscriminator(nn.Module):
+    def __init__(self):
+        super(MSDiscriminator, self).__init__()
+        self.d1 = Discriminator()
+        self.d2 = Discriminator()
+        self.d3 = Discriminator()
+
+    def forward(self, inputs):
+        l1 = self.d1(inputs)
+        l2 = self.d2(F.interpolate(inputs, scale_factor=0.5))
+        l3 = self.d2(F.interpolate(inputs, scale_factor=0.25))
+        return torch.mean(torch.stack((l1, l2, l3)))
