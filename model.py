@@ -9,9 +9,9 @@ NUM_BANDS = 6
 
 
 class Sampling(enum.Enum):
-    UPSAMPLING = enum.auto()
-    DOWNSAMPLING = enum.auto()
-    NOSAMPLING = enum.auto()
+    UpSampling = enum.auto()
+    DownSampling = enum.auto()
+    Identity = enum.auto()
 
 
 class Conv3X3NoPadding(nn.Conv2d):
@@ -39,11 +39,13 @@ class Upsample(nn.Module):
 class ConvBlock(nn.Sequential):
     def __init__(self, in_channels, out_channels, sampling=None):
         layers = []
-        if sampling == Sampling.UpSampling:
-            layers.append(Upsample(2))
-            layers.append(Conv3X3WithPadding(in_channels, out_channels))
-        elif sampling == Sampling.DownSampling:
+
+        if sampling == Sampling.DownSampling:
             layers.append(Conv3X3WithPadding(in_channels, out_channels, 2))
+        else:
+            if sampling == Sampling.UpSampling:
+                layers.append(Upsample(2))
+            layers.append(Conv3X3WithPadding(in_channels, out_channels))
 
         layers.append(nn.LeakyReLU(inplace=True))
         super(ConvBlock, self).__init__(*layers)
@@ -68,12 +70,12 @@ class AutoEncoder(nn.Module):
         super(AutoEncoder, self).__init__()
         channels = (NUM_BANDS, 16, 32, 64, 128)
         self.conv1 = ConvBlock(channels[0], channels[1])
-        self.conv2 = ConvBlock(channels[1], channels[2], Sampling.DOWNSAMPLING)
-        self.conv3 = ConvBlock(channels[2], channels[3], Sampling.DOWNSAMPLING)
-        self.conv4 = ConvBlock(channels[3], channels[4], Sampling.DOWNSAMPLING)
-        self.conv5 = ConvBlock(channels[4], channels[3], Sampling.UPSAMPLING)
-        self.conv6 = ConvBlock(channels[3] * 2, channels[2], Sampling.UPSAMPLING)
-        self.conv7 = ConvBlock(channels[2] * 2, channels[1], Sampling.UPSAMPLING)
+        self.conv2 = ConvBlock(channels[1], channels[2], Sampling.DownSampling)
+        self.conv3 = ConvBlock(channels[2], channels[3], Sampling.DownSampling)
+        self.conv4 = ConvBlock(channels[3], channels[4], Sampling.DownSampling)
+        self.conv5 = ConvBlock(channels[4], channels[3], Sampling.UpSampling)
+        self.conv6 = ConvBlock(channels[3] * 2, channels[2], Sampling.UpSampling)
+        self.conv7 = ConvBlock(channels[2] * 2, channels[1], Sampling.UpSampling)
         self.conv8 = nn.Conv2d(channels[1] * 2, channels[0], 1)
 
     def forward(self, inputs):
