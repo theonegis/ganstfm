@@ -123,7 +123,7 @@ class Experiment(object):
 
             train_loss, train_error = self.train_on_epoch(epoch, train_loader)
             val_loss, val_error = self.test_on_epoch(val_loader)
-            csv_header = ['epoch', 'train_loss', 'train_error', 'val_loss', 'val_error']
+            csv_header = ['epoch', 'train_loss', 'val_error', 'val_loss', 'val_error']
             csv_values = [epoch, train_loss, train_error, val_loss, val_error]
             log_csv(self.history, csv_values, header=csv_header)
             if val_error <= least_error:

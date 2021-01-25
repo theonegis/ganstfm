@@ -7,7 +7,10 @@ import torch.backends.cudnn as cudnn
 import data
 from experiment import Experiment
 
+import os
 import faulthandler
+
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 faulthandler.enable()
 
 """
