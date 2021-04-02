@@ -78,7 +78,7 @@ class Experiment(object):
             self.generator.zero_grad()
             prediction = self.generator(inputs)
             d_loss = (self.d_loss(self.discriminator(torch.cat((target, inputs[0]), 1)),
-                                  self.discriminator(torch.cat((prediction.detach(), inputs[0]), 0))))
+                                  self.discriminator(torch.cat((prediction.detach(), inputs[0]), 1))))
             d_loss.backward()
             self.d_optimizer.step()
             epd_loss.update(d_loss.item())
