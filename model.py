@@ -230,5 +230,5 @@ class MSDiscriminator(nn.Module):
     def forward(self, inputs):
         l1 = self.d1(inputs)
         l2 = self.d2(F.interpolate(inputs, scale_factor=0.5))
-        l3 = self.d2(F.interpolate(inputs, scale_factor=0.25))
+        l3 = self.d3(F.interpolate(inputs, scale_factor=0.25))
         return torch.mean(torch.stack((l1, l2, l3)))
